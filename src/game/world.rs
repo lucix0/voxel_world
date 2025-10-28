@@ -77,7 +77,7 @@ impl World {
         self.chunks.get(&chunk_pos)?.get_voxel(local_x, local_y, local_z)
     }
 
-    pub fn set_voxel(&mut self, device: &wgpu::Device, wx: i32, wy: i32, wz: i32, voxel: VoxelType) {
+    pub fn set_voxel(&mut self, wx: i32, wy: i32, wz: i32, voxel: VoxelType) {
         let chunk_pos = ChunkPos::new(
             wx.div_euclid(CHUNK_SIZE as i32),
             wy.div_euclid(CHUNK_SIZE as i32),

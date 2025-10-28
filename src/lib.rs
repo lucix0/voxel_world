@@ -1,56 +1,61 @@
 pub mod app;
 mod game;
+mod input;
 mod rendering;
 
 use std::sync::Arc;
-
 use wgpu::util::DeviceExt;
-use winit::{
-    event_loop::ActiveEventLoop,
-    keyboard::KeyCode,
-    window::Window
-};
-use winit::event::DeviceEvent;
+use winit::{event_loop::ActiveEventLoop, event::DeviceEvent, keyboard::KeyCode, window::Window};
 
-use game::camera;
 use game::camera::Camera;
-use game::camera_controller::CameraController;
 use game::chunk::ChunkPos;
 use game::world::World;
+
+use input::camera_controller::CameraController;
 
 use rendering::texture;
 use rendering::chunk_renderer::ChunkRenderer;
 use rendering::projection::Projection;
+use crate::game::player::Player;
 
 pub struct State {
-    // Game
-    world: World,
-    camera: Camera,
-    camera_controller: CameraController,
-
-    // Rendering
-    chunk_renderer: ChunkRenderer,
-    projection: Projection,
-
-    // GPU
+    // GPU Resources
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+
+    // Game State
+    world: World,
+    player: Player,
+    camera: Camera,
+
+    // Input state
+    camera_controller: CameraController,
+    mouse_pressed: bool,
+
+    // Rendering state
+    projection: Projection,
+    chunk_renderer: ChunkRenderer,
+
+    // Render pipeline and resources
     render_pipeline: wgpu::RenderPipeline,
     diffuse_bind_group: wgpu::BindGroup,
-    diffuse_texture: texture::Texture,
-    is_surface_configured: bool,
-    last_render_time: std::time::Instant,
-    pub mouse_pressed: bool,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     depth_texture: texture::Texture,
+
+    // Timing
+    last_render_time: std::time::Instant,
+    is_surface_configured: bool,
 }
 
 impl State {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
+        /*
+            GPU Setup
+        */
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -92,6 +97,9 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        /*
+            Load Resources
+        */
         let diffuse_bytes = include_bytes!("../resources/textures/voxel_textures.png");
         let diffuse_texture = texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
 
@@ -135,24 +143,28 @@ impl State {
             }
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-           label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../resources/shaders/shader.wgsl").into()),
-        });
-
+        /*
+            Setup Game State
+        */
         let camera = Camera::new(
             (0.0, 16.0, 32.0).into(),
             -std::f32::consts::FRAC_PI_2,
             0.0,
         );
 
-        let projection = Projection::new(
-            config.width,
-            config.height
-        );
-
+        let projection = Projection::new(config.width, config.height);
         let camera_controller = CameraController::new(10.0, 0.003);
 
+        let mut world = World::new();
+        world.load_chunk(ChunkPos::new(0, 1, 0));
+        world.load_chunk(ChunkPos::new(0, 0, 0));
+        world.load_chunk(ChunkPos::new(0, -1, 0));
+
+        let player = Player::new((0.0, 32.0, 16.0).into());
+
+        /*
+            Setup Camera Uniform
+        */
         let camera_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Camera Buffer"),
@@ -188,7 +200,16 @@ impl State {
             label: Some("camera_bind_group"),
         });
 
+        /*
+            Create Render Pipeline
+        */
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../resources/shaders/shader.wgsl").into()),
+        });
+
 
         let render_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -247,12 +268,6 @@ impl State {
             cache: None,
         });
 
-        // Game
-        let mut world = World::new();
-        world.load_chunk(ChunkPos::new(0, 1, 0));
-        world.load_chunk(ChunkPos::new(0, 0, 0));
-        world.load_chunk(ChunkPos::new(0, -1, 0));
-
         let chunk_renderer = ChunkRenderer::new();
 
         Ok(Self {
@@ -264,7 +279,6 @@ impl State {
             window,
             render_pipeline,
             diffuse_bind_group,
-            diffuse_texture,
             camera,
             camera_controller,
             projection,
@@ -272,12 +286,16 @@ impl State {
             camera_bind_group,
             depth_texture,
             world,
+            player,
             last_render_time: std::time::Instant::now(),
             mouse_pressed: false,
             chunk_renderer,
         })
     }
 
+    /*
+        Window Events
+    */
     pub fn resize(&mut self, _width: u32, _height: u32) {
         if _width > 0 && _height > 0 {
             self.config.width = _width;
@@ -308,15 +326,22 @@ impl State {
         }
     }
 
+    /*
+        Game Loop
+    */
     fn update(&mut self) {
         // Calculate delta time
         let now = std::time::Instant::now();
         let dt = now.duration_since(self.last_render_time).as_secs_f32();
         self.last_render_time = now;
 
-        // Camera
+        // Update camera
         self.camera_controller.update_camera(&mut self.camera, dt);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.projection.get_view_projection_matrix(&self.camera)]));
+
+        self.player.position = self.camera.position;
+        self.player.update(&mut self.world);
+        self.camera.position = self.player.position;
 
         // Remesh chunks if necessary
         self.chunk_renderer.update(&mut self.world, &self.device);
