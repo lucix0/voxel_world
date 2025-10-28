@@ -1,5 +1,3 @@
-use crate::mesh::FaceDirection;
-
 pub const CHUNK_SIZE: usize = 16;
 pub const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
@@ -35,24 +33,6 @@ pub enum VoxelType {
     Grass,
     Dirt,
     Stone,
-}
-
-impl VoxelType {
-    pub fn texture_coords(&self, face: &FaceDirection) -> (f32, f32) {
-        match self {
-            VoxelType::Air => (0.0, 0.0), // Shouldn't be rendered
-            VoxelType::Stone => (2.0, 0.0), // Tile (2, 0) in atlas
-            VoxelType::Dirt => (1.0, 0.0),  // Tile (1, 0)
-            VoxelType::Grass => {
-                // Grass has different textures per face
-                match face {
-                    FaceDirection::Top => (0.0, 1.0),    // Grass top
-                    FaceDirection::Bottom => (1.0, 0.0), // Dirt bottom
-                    _ => (0.0, 0.0), // Grass side
-                }
-            }
-        }
-    }
 }
 
 pub struct Chunk {

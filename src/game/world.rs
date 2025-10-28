@@ -1,17 +1,16 @@
-use std::collections::HashMap;
-use crate::chunk::{Chunk, ChunkPos, VoxelType, CHUNK_SIZE};
-use crate::mesh::{ChunkMeshBuffer, ChunkMesher};
+use std::collections::{HashMap, HashSet};
+use crate::game::chunk::{Chunk, ChunkPos, VoxelType, CHUNK_SIZE};
 
 pub struct World {
     chunks: HashMap<ChunkPos, Chunk>,
-    pub chunk_buffers: HashMap<ChunkPos, ChunkMeshBuffer>,
+    dirty_chunks: HashSet<ChunkPos>,
 }
 
 impl World {
     pub fn new() -> Self {
         Self {
             chunks: HashMap::new(),
-            chunk_buffers: HashMap::new(),
+            dirty_chunks: HashSet::new(),
         }
     }
 
@@ -23,25 +22,16 @@ impl World {
         self.chunks.get_mut(&pos)
     }
 
-    pub fn load_chunk(&mut self, device: &wgpu::Device, pos: ChunkPos) {
-        // Later on, chunk will either be freshly generated or loaded from disk.
-        // For now, just generate it.
+    pub fn load_chunk(&mut self, pos: ChunkPos) {
         if !self.chunks.contains_key(&pos) {
             let chunk = self.generate_chunk(pos);
-            let chunk_mesh = ChunkMesher::generate_mesh(&chunk, pos);
-
-            // Don't add a buffer if the chunk is all air.
-            if let Some(chunk_buffer) = ChunkMeshBuffer::from_mesh(device, &chunk_mesh) {
-                self.chunk_buffers.insert(pos, chunk_buffer);
-            }
-
             self.chunks.insert(pos, chunk);
+            self.dirty_chunks.insert(pos);
         }
     }
 
     fn unload_chunk(&mut self, pos: ChunkPos) {
         self.chunks.remove(&pos);
-        self.chunk_buffers.remove(&pos);
     }
 
     fn generate_chunk(&mut self, pos: ChunkPos) -> Chunk {
@@ -98,10 +88,15 @@ impl World {
         let local_y = wy.rem_euclid(CHUNK_SIZE as i32) as usize;
         let local_z = wz.rem_euclid(CHUNK_SIZE as i32) as usize;
 
-        self.load_chunk(device, chunk_pos);
+        self.load_chunk(chunk_pos);
 
         if let Some(chunk) = self.chunks.get_mut(&chunk_pos) {
             chunk.set_voxel(local_x, local_y, local_z, voxel);
+            self.dirty_chunks.insert(chunk_pos);
         }
+    }
+
+    pub fn take_dirty_chunks(&mut self) -> impl Iterator<Item = ChunkPos> + '_ {
+        self.dirty_chunks.drain()
     }
 }
