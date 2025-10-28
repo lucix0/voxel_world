@@ -11,7 +11,7 @@ use game::camera::Camera;
 use game::chunk::ChunkPos;
 use game::world::World;
 
-use input::camera_controller::CameraController;
+use input::player_controller::PlayerController;
 
 use rendering::texture;
 use rendering::chunk_renderer::ChunkRenderer;
@@ -32,7 +32,7 @@ pub struct State {
     camera: Camera,
 
     // Input state
-    camera_controller: CameraController,
+    player_controller: PlayerController,
     mouse_pressed: bool,
 
     // Rendering state
@@ -153,7 +153,7 @@ impl State {
         );
 
         let projection = Projection::new(config.width, config.height);
-        let camera_controller = CameraController::new(10.0, 0.003);
+        let player_controller = PlayerController::new(0.003);
 
         let mut world = World::new();
         world.load_chunk(ChunkPos::new(0, 1, 0));
@@ -280,7 +280,7 @@ impl State {
             render_pipeline,
             diffuse_bind_group,
             camera,
-            camera_controller,
+            player_controller,
             projection,
             camera_buffer,
             camera_bind_group,
@@ -311,7 +311,7 @@ impl State {
         if code == KeyCode::Escape && is_pressed {
             event_loop.exit();
         } else {
-            self.camera_controller.handle_key(code, is_pressed);
+            self.player_controller.handle_key(code, is_pressed);
         }
     }
 
@@ -319,7 +319,7 @@ impl State {
         match event {
             DeviceEvent::MouseMotion { delta } => {
                 if self.mouse_pressed {
-                    self.camera_controller.handle_mouse(delta.0, delta.1, &mut self.camera);
+                    self.player_controller.handle_mouse(delta.0, delta.1, &mut self.camera);
                 }
             }
             _ => {}
@@ -332,15 +332,16 @@ impl State {
     fn update(&mut self) {
         // Calculate delta time
         let now = std::time::Instant::now();
-        let dt = now.duration_since(self.last_render_time).as_secs_f32();
+        let mut dt = now.duration_since(self.last_render_time).as_secs_f32();
         self.last_render_time = now;
 
+        dt = dt.min(0.1);
+
         // Update camera
-        self.camera_controller.update_camera(&mut self.camera, dt);
+        self.player_controller.update_velocity(&mut self.player, &mut self.camera, dt);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.projection.get_view_projection_matrix(&self.camera)]));
 
-        self.player.position = self.camera.position;
-        self.player.update(&mut self.world);
+        self.player.update(&mut self.world, dt);
         self.camera.position = self.player.position;
 
         // Remesh chunks if necessary

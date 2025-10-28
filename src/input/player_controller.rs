@@ -1,10 +1,12 @@
-use cgmath::InnerSpace;
+use cgmath::{InnerSpace, Zero};
 use winit::keyboard::KeyCode;
 use crate::game::camera::Camera;
+use crate::game::player::Player;
 
-pub struct CameraController {
-    speed: f32,
+const JUMP_STRENGTH: f32 = 7.0;
 
+pub struct PlayerController {
+    // Keyboard input.
     is_forward_pressed: bool,
     is_backward_pressed: bool,
     is_left_pressed: bool,
@@ -12,15 +14,15 @@ pub struct CameraController {
     is_up_pressed: bool,
     is_down_pressed: bool,
 
+    // Mouse input.
     mouse_sensitivity: f32,
     pub mouse_delta: (f32, f32),
     is_mouse_captured: bool,
 }
 
-impl CameraController {
-    pub fn new(speed: f32, mouse_sensitivity: f32) -> Self {
+impl PlayerController {
+    pub fn new(mouse_sensitivity: f32) -> Self {
         Self {
-            speed,
             is_forward_pressed: false,
             is_backward_pressed: false,
             is_left_pressed: false,
@@ -72,26 +74,37 @@ impl CameraController {
         camera.pitch = camera.pitch.clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
     }
 
-    pub fn update_camera(&self, camera: &mut Camera, dt: f32) {
-        let move_speed = self.speed * dt;
+    pub fn update_velocity(&self, player: &mut Player, camera: &mut Camera, dt: f32) {
+        let move_speed = 10.0;
+
+        let mut move_direction = cgmath::Vector3::zero();
 
         if self.is_forward_pressed {
-            camera.position += camera.get_forward_horizontal() * move_speed;
+            move_direction += camera.get_forward_horizontal();
         }
         if self.is_backward_pressed {
-            camera.position -= camera.get_forward_horizontal() * move_speed;
+            move_direction -= camera.get_forward_horizontal();
         }
         if self.is_right_pressed {
-            camera.position += camera.get_right() * move_speed;
+            move_direction += camera.get_right();
         }
         if self.is_left_pressed {
-            camera.position -= camera.get_right() * move_speed;
+            move_direction -= camera.get_right();
         }
-        if self.is_up_pressed {
-            camera.position += camera.get_up() * move_speed;
+
+        let horizontal_velocity = if !move_direction.is_zero() {
+            move_direction.normalize() * move_speed
+        } else {
+            cgmath::Vector3::zero()
+        };
+
+        let mut vertical_velocity = player.velocity.y;
+        if self.is_up_pressed && player.is_on_ground {
+            vertical_velocity = JUMP_STRENGTH;
         }
-        if self.is_down_pressed {
-            camera.position -= camera.get_up() * move_speed;
-        }
+
+        player.velocity.x = horizontal_velocity.x;
+        player.velocity.y = vertical_velocity;
+        player.velocity.z = horizontal_velocity.z;
     }
 }
