@@ -19,7 +19,7 @@ impl Projection {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             aspect: width as f32 / height as f32,
-            fovy: 45.0,
+            fovy: 68.0,
             znear: 0.1,
             zfar: 1000.0,
         }

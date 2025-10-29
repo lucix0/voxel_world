@@ -6,7 +6,7 @@ mod rendering;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{event_loop::ActiveEventLoop, event::DeviceEvent, keyboard::KeyCode, window::Window};
-
+use winit::window::CursorGrabMode;
 use game::camera::Camera;
 use game::chunk::ChunkPos;
 use game::world::World;
@@ -16,7 +16,9 @@ use input::player_controller::PlayerController;
 use rendering::texture;
 use rendering::chunk_renderer::ChunkRenderer;
 use rendering::projection::Projection;
+use crate::game::chunk::VoxelType;
 use crate::game::player::Player;
+use crate::game::{raycast_voxel, RaycastHit};
 
 pub struct State {
     // GPU Resources
@@ -30,9 +32,12 @@ pub struct State {
     world: World,
     player: Player,
     camera: Camera,
+    selected_block: Option<RaycastHit>,
+    held_block_type: VoxelType,
 
     // Input state
     player_controller: PlayerController,
+    cursor_grabbed: bool,
     mouse_pressed: bool,
 
     // Rendering state
@@ -270,6 +275,8 @@ impl State {
 
         let chunk_renderer = ChunkRenderer::new();
 
+        Self::set_cursor_grabbed(&window, true);
+
         Ok(Self {
             surface,
             device,
@@ -287,10 +294,32 @@ impl State {
             depth_texture,
             world,
             player,
+            cursor_grabbed: true,
+            selected_block: None,
+            held_block_type: VoxelType::Stone,
             last_render_time: std::time::Instant::now(),
             mouse_pressed: false,
             chunk_renderer,
         })
+    }
+
+    fn set_cursor_grabbed(window: &Window, grabbed: bool) {
+        if grabbed {
+            // Hide cursor
+            window.set_cursor_visible(false);
+
+            // Capture/lock cursor
+            window.set_cursor_grab(CursorGrabMode::Confined)
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked))
+                .unwrap_or_else(|e| log::warn!("Failed to grab cursor: {}", e));
+        } else {
+            // Show cursor
+            window.set_cursor_visible(true);
+
+            // Release cursor
+            window.set_cursor_grab(CursorGrabMode::None)
+                .unwrap_or_else(|e| log::warn!("Failed to release cursor: {}", e));
+        }
     }
 
     /*
@@ -309,7 +338,8 @@ impl State {
 
     fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
         if code == KeyCode::Escape && is_pressed {
-            event_loop.exit();
+            self.cursor_grabbed = !self.cursor_grabbed;
+            Self::set_cursor_grabbed(&self.window, self.cursor_grabbed);
         } else {
             self.player_controller.handle_key(code, is_pressed);
         }
@@ -318,12 +348,57 @@ impl State {
     pub fn device_input(&mut self, event: &DeviceEvent) {
         match event {
             DeviceEvent::MouseMotion { delta } => {
-                if self.mouse_pressed {
-                    self.player_controller.handle_mouse(delta.0, delta.1, &mut self.camera);
-                }
+                self.player_controller.handle_mouse(delta.0, delta.1, &mut self.camera);
             }
             _ => {}
         }
+    }
+
+    fn break_block(&mut self) {
+        if let Some(hit) = &self.selected_block {
+            let (x, y, z) = hit.position;
+            self.world.set_voxel(x, y, z, VoxelType::Air);
+        }
+    }
+
+    fn place_block(&mut self) {
+        if let Some(hit) = &self.selected_block {
+            let (x, y, z) = hit.position;
+            let (nx, ny, nz) = hit.normal;
+
+            let place_x = x + nx;
+            let place_y = y + ny;
+            let place_z = z + nz;
+
+            if !self.is_position_inside_player(place_x, place_y, place_z) {
+                self.world.set_voxel(place_x, place_y, place_z, self.held_block_type);
+            }
+        }
+    }
+
+    fn is_position_inside_player(&self, x: i32, y: i32, z: i32) -> bool {
+        // Check if block would intersect with player's collision box
+        let block_min_x = x as f32;
+        let block_max_x = (x + 1) as f32;
+        let block_min_y = y as f32;
+        let block_max_y = (y + 1) as f32;
+        let block_min_z = z as f32;
+        let block_max_z = (z + 1) as f32;
+
+        let player_min_x = self.player.position.x - self.player.width / 2.0;
+        let player_max_x = self.player.position.x + self.player.width / 2.0;
+        let player_min_y = self.player.position.y - self.player.height / 2.0;
+        let player_max_y = self.player.position.y + self.player.height / 2.0;
+        let player_min_z = self.player.position.z - self.player.width / 2.0;
+        let player_max_z = self.player.position.z + self.player.width / 2.0;
+
+        // AABB intersection test
+        block_min_x < player_max_x
+            && block_max_x > player_min_x
+            && block_min_y < player_max_y
+            && block_max_y > player_min_y
+            && block_min_z < player_max_z
+            && block_max_z > player_min_z
     }
 
     /*
@@ -342,7 +417,17 @@ impl State {
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.projection.get_view_projection_matrix(&self.camera)]));
 
         self.player.update(&mut self.world, dt);
-        self.camera.position = self.player.position;
+        self.camera.position = self.player.position + cgmath::vec3(0.0, 0.8, 0.0);
+
+        // Raycast to find selected block
+        let ray_origin = self.camera.position;
+        let ray_direction = self.camera.get_direction();
+        self.selected_block = raycast_voxel(
+            &self.world,
+            ray_origin,
+            ray_direction,
+            5.0,
+        );
 
         // Remesh chunks if necessary
         self.chunk_renderer.update(&mut self.world, &self.device);

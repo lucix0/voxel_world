@@ -77,11 +77,22 @@ impl ApplicationHandler<State> for App {
                 ..
             } => state.handle_key(event_loop, code, key_state.is_pressed()),
             WindowEvent::MouseInput {
-                button: MouseButton::Left,
+                button,
                 state: mouse_state,
                 ..
-            } => {
-                state.mouse_pressed = mouse_state == ElementState::Pressed;
+            } => match button {
+                MouseButton::Left => {
+                    if mouse_state == ElementState::Pressed {
+                            state.break_block();
+                    }
+                    state.mouse_pressed = mouse_state == ElementState::Pressed;
+                }
+                MouseButton::Right => {
+                    if mouse_state == ElementState::Pressed {
+                        state.place_block();
+                    }
+                }
+                _ => {}
             }
             _ => {}
         }
