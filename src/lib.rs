@@ -2,8 +2,10 @@ pub mod app;
 mod game;
 mod input;
 mod rendering;
+mod ui;
 
 use std::sync::Arc;
+use egui_wgpu::ScreenDescriptor;
 use wgpu::util::DeviceExt;
 use winit::{event_loop::ActiveEventLoop, event::DeviceEvent, keyboard::KeyCode, window::Window};
 use winit::window::CursorGrabMode;
@@ -19,6 +21,7 @@ use rendering::projection::Projection;
 use crate::game::chunk::VoxelType;
 use crate::game::player::Player;
 use crate::game::{raycast_voxel, RaycastHit};
+use crate::ui::debug_ui::DebugUi;
 
 pub struct State {
     // GPU Resources
@@ -39,6 +42,9 @@ pub struct State {
     player_controller: PlayerController,
     cursor_grabbed: bool,
     mouse_pressed: bool,
+
+    // UI state
+    debug_ui: DebugUi,
 
     // Rendering state
     projection: Projection,
@@ -275,6 +281,14 @@ impl State {
 
         let chunk_renderer = ChunkRenderer::new();
 
+        let debug_ui = DebugUi::new(
+            &device,
+            surface_format,
+            None,
+            1,
+            &window,
+        );
+
         Self::set_cursor_grabbed(&window, true);
 
         Ok(Self {
@@ -294,6 +308,7 @@ impl State {
             depth_texture,
             world,
             player,
+            debug_ui,
             cursor_grabbed: true,
             selected_block: None,
             held_block_type: VoxelType::Stone,
@@ -482,6 +497,38 @@ impl State {
         self.chunk_renderer.render(&mut render_pass);
 
         drop(render_pass);
+
+        let surface_view = output
+            .texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: self.window.as_ref().scale_factor() as f32,
+        };
+
+        self.debug_ui.begin_frame(&self.window);
+
+        egui::Window::new("winit + egui + wgpu says hello!")
+            .resizable(true)
+            .vscroll(true)
+            .default_open(true)
+            .show(self.debug_ui.context(), |ui| {
+                ui.label("Label!");
+
+                if ui.button("Button!").clicked() {
+                    println!("boom!")
+                }
+            });
+
+        self.debug_ui.end_frame_and_draw(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &self.window,
+            &surface_view,
+            screen_descriptor,
+        );
+
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
