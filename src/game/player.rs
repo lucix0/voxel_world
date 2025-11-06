@@ -2,6 +2,8 @@ use cgmath::Zero;
 use crate::game::chunk::VoxelType;
 use crate::game::world::World;
 
+const GRAVITY: f32 = 3.0 * -9.81;
+
 enum Axis {
     X,
     Y,
@@ -130,7 +132,6 @@ impl Player {
     }
 
     pub fn update(&mut self, world: &mut World, dt: f32) {
-        const GRAVITY: f32 = -9.81;
         self.is_on_ground = false;
         self.velocity.y += GRAVITY * dt;
 

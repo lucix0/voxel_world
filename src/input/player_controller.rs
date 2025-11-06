@@ -3,7 +3,8 @@ use winit::keyboard::KeyCode;
 use crate::game::camera::Camera;
 use crate::game::player::Player;
 
-const JUMP_STRENGTH: f32 = 7.0;
+const JUMP_STRENGTH: f32 = 9.0;
+const MOVE_SPEED: f32 = 5.0;
 
 pub struct PlayerController {
     // Keyboard input.
@@ -75,8 +76,6 @@ impl PlayerController {
     }
 
     pub fn update_velocity(&self, player: &mut Player, camera: &mut Camera, dt: f32) {
-        let move_speed = 10.0;
-
         let mut move_direction = cgmath::Vector3::zero();
 
         if self.is_forward_pressed {
@@ -93,7 +92,7 @@ impl PlayerController {
         }
 
         let horizontal_velocity = if !move_direction.is_zero() {
-            move_direction.normalize() * move_speed
+            move_direction.normalize() * MOVE_SPEED
         } else {
             cgmath::Vector3::zero()
         };

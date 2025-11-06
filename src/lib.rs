@@ -15,12 +15,12 @@ use game::world::World;
 
 use input::player_controller::PlayerController;
 
-use rendering::texture;
 use rendering::projection::Projection;
 use crate::game::chunk::VoxelType;
 use crate::game::player::Player;
 use crate::game::{raycast_voxel, RaycastHit};
 use crate::rendering::geometry_renderer::GeometryRenderer;
+use crate::rendering::gpu_context::GpuContext;
 use crate::rendering::SharedResources;
 use crate::ui::debug_ui::DebugUi;
 use crate::ui::panels;
@@ -29,8 +29,7 @@ pub struct State {
     // GPU Resources
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    gpu_context: GpuContext,
     config: wgpu::SurfaceConfiguration,
 
     // Game State
@@ -64,34 +63,11 @@ pub struct State {
 
 impl State {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
-        /*
-            GPU Setup
-        */
+        let (gpu_context, surface) = GpuContext::new(window.clone()).await?;
+
         let size = window.inner_size();
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-           backends: wgpu::Backends::PRIMARY,
-           ..Default::default()
-        });
-
-        let surface = instance.create_surface(window.clone()).unwrap();
-
-        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }).await?;
-
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::empty(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: Default::default(),
-            trace: wgpu::Trace::Off,
-        }).await?;
-
-        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_caps = surface.get_capabilities(&gpu_context.adapter);
 
         let surface_format = surface_caps.formats.iter()
             .find(|f| f.is_srgb())
@@ -109,7 +85,7 @@ impl State {
         };
 
         let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -131,7 +107,7 @@ impl State {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let shared_resources = SharedResources::new(&device, &queue, &texture_bind_group_layout);
+        let shared_resources = SharedResources::new(&gpu_context.device, &gpu_context.queue, &texture_bind_group_layout);
 
         /*
             Setup Game State
@@ -155,7 +131,7 @@ impl State {
         /*
             Setup Camera Uniform
         */
-        let camera_buffer = device.create_buffer_init(
+        let camera_buffer = gpu_context.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Camera Buffer"),
                 contents: bytemuck::cast_slice(&[projection.get_view_projection_matrix(&camera)]),
@@ -163,7 +139,7 @@ impl State {
             }
         );
 
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let camera_bind_group_layout = gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -179,7 +155,7 @@ impl State {
             label: Some("camera_bind_group_layout"),
         });
 
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let camera_bind_group = gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &camera_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -190,16 +166,15 @@ impl State {
             label: Some("camera_bind_group"),
         });
 
-
         let geometry_renderer = GeometryRenderer::new(
-            &device,
+            &gpu_context.device,
             &config,
             &texture_bind_group_layout,
             &camera_bind_group_layout,
         );
 
         let debug_ui = DebugUi::new(
-            &device,
+            &gpu_context.device,
             surface_format,
             None,
             1,
@@ -210,11 +185,10 @@ impl State {
 
         Ok(Self {
             surface,
-            device,
-            queue,
             config,
             is_surface_configured: false,
             window,
+            gpu_context,
             shared_resources,
             camera,
             player_controller,
@@ -259,11 +233,11 @@ impl State {
         if _width > 0 && _height > 0 {
             self.config.width = _width;
             self.config.height = _height;
-            self.surface.configure(&self.device, &self.config);
+            self.surface.configure(&self.gpu_context.device, &self.config);
             self.is_surface_configured = true;
         }
 
-        self.geometry_renderer.recreate_depth_texture(&self.device, &self.config);
+        self.geometry_renderer.recreate_depth_texture(&self.gpu_context.device, &self.config);
     }
 
     fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
@@ -344,7 +318,7 @@ impl State {
 
         // Update camera
         self.player_controller.update_velocity(&mut self.player, &mut self.camera, dt);
-        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.projection.get_view_projection_matrix(&self.camera)]));
+        self.gpu_context.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.projection.get_view_projection_matrix(&self.camera)]));
 
         self.player.update(&mut self.world, dt);
         self.camera.position = self.player.position + cgmath::vec3(0.0, 0.8, 0.0);
@@ -360,7 +334,7 @@ impl State {
         );
 
         // Remesh chunks if necessary
-        self.geometry_renderer.update_chunk_renderer(&mut self.world, &self.device);
+        self.geometry_renderer.update_chunk_renderer(&mut self.world, &self.gpu_context.device);
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -373,7 +347,7 @@ impl State {
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 
@@ -413,8 +387,8 @@ impl State {
             });
 
         self.debug_ui.end_frame_and_draw(
-            &self.device,
-            &self.queue,
+            &self.gpu_context.device,
+            &self.gpu_context.queue,
             &mut encoder,
             &self.window,
             &surface_view,
@@ -422,7 +396,7 @@ impl State {
         );
 
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.gpu_context.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())

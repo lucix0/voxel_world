@@ -5,6 +5,7 @@ pub mod texture;
 pub mod projection;
 pub mod geometry_renderer;
 pub mod shared_resources;
+pub mod gpu_context;
 
 pub use geometry_renderer::GeometryRenderer;
 pub use shared_resources::SharedResources;
